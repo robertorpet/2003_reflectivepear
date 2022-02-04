@@ -1,0 +1,467 @@
+
+2003 project code, Robert Orpet, 21 Jan, 2022
+For: Reflective groundcovers implementation manuscript
+
+The purpose is to visualize and statistically analyze pear psylla data from a trial of reflective groundcovers at five orchards in 2020. Experimental units are orchards.
+
+```{r Chunk 1 - Setup}
+
+#Load packages
+library(readxl)
+library(ggplot2)
+library(ggpubr)
+library(glmmTMB)
+library(DHARMa)
+library(car)
+library(emmeans)
+
+#Load and subset data
+Data <- read_excel("2003 - data - beats and buds.xlsx",
+                   skip = 9,
+                   guess_max = 10000) #guessmax prevents columns with many initial banks being imported as a logical FALSE for not NAs
+Data <- subset(Data, day < 200) #Exclude the late sample in August since it was over a month divorced from previous samples and groundcovers were removed
+Data <- subset(Data, !(Site == "E" & day == 77)) #exclude the early pre-treatment sample at site E so we only visualize and analyze the one sample closer to groundcover installation
+
+#calculate sum of eggs for the two locations on buds
+Data$budcount_eggs <- Data$Eggs.bud + Data$Eggs.wood
+
+#Subset by season for future analysis
+Data_pre <- subset(Data, Phase == 'Pretreatment')
+Data_spring_post <- subset(Data, Phase == 'Buds')
+Data_spring_all <- subset(Data, Phase != 'Leaves')
+Data_summer <- subset(Data, Phase == 'Leaves')
+
+#I want to rename site labels for future graphs
+Data_spring_all$Site <- as.factor(Data_spring_all$Site)
+levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="A"] <- "Site A"
+levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="B"] <- "Site B"
+levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="C"] <- "Site C"
+levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="D"] <- "Site D"
+levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="E"] <- "Site E"
+
+#I want to rename treatment labels for future graphs
+Data_spring_all$Trt <- as.factor(Data_spring_all$Trt)
+levels(Data_spring_all$Trt)[levels(Data_spring_all$Trt)=="Control"] <- "Control"
+levels(Data_spring_all$Trt)[levels(Data_spring_all$Trt)=="Mylar"] <- "Metallized film"
+levels(Data_spring_all$Trt)[levels(Data_spring_all$Trt)=="Extenday"] <- "Reflective fabric"
+
+```
+
+```{r Chunk 2 - Visualization}
+
+#Theme for graphs
+theme_set(theme_classic())
+  theme_update(
+        strip.text = element_blank(),
+        strip.background = element_blank(),
+        panel.border = element_rect(fill = NA, colour = "black", size = 0.75),
+        axis.line = element_line(colour = 'black', size = 0),
+        axis.ticks = element_line(colour = "black"),
+        axis.text.y = element_text(color = 'black'),
+        axis.text.x = element_text(color = "black"),
+        panel.spacing = unit(0.5, "lines"),
+  legend.position=c(1,1),
+  legend.justification=c(1,0),
+  legend.box="vertical",
+  legend.direction='vertical',
+  legend.box.margin=margin(-10,0,5,0), #top,right,bottom,left
+  legend.title = element_blank(),
+  legend.key.size = unit(0.75, 'lines')
+        )
+
+#Springtime graphs of adults, eggs, and nymphs [Figure 1]
+adults <- ggplot(data = Data_spring_all, aes(x = day, y = Adults, shape = Trt, fill = Trt, color = Trt)) +
+  geom_hline(data = subset(Data_spring_all, Site == "Site E"), aes(yintercept = 8), color = 'white') + #this expands the y axis a little to prevent decimal digits in that panel
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  scale_y_continuous(limits = c(0, NA)) + 
+  stat_summary(fun.y = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
+  stat_summary(fun.y = mean, geom = "point") +
+  facet_wrap(~Site, scales = "free_y", nrow = 1) +
+  #Vertical lines for DEPLOYMENT
+  geom_vline(data = subset(Data_spring_all, Site == "Site A"), aes(xintercept = 78)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site B"), aes(xintercept = 82)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site C"), aes(xintercept = 81)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site D"), aes(xintercept = 82)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site E"), aes(xintercept = 92)) +
+  scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
+  ylab('No. adults') +
+  xlab('') +
+  guides(shape = guide_legend(nrow = 3))  +
+  theme(
+  strip.text = element_text(size = 10, hjust = 0),
+  plot.margin=unit(c(-0.2,0.1,-1,0.1),"cm")
+  )
+eggs <- ggplot(data = Data_spring_all, aes(x = day, y = Eggs.bud+Eggs.wood, shape = Trt, fill = Trt, color = Trt)) +
+  geom_hline(data = subset(Data_spring_all, Site == "Site D"), aes(yintercept = 13), color = 'white') + #this expands the y axis a little to prevent decimal digits in that panel
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  scale_y_continuous(limits = c(0, NA)) + 
+  stat_summary(fun.y = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
+  stat_summary(fun.y = mean, geom = "point") +
+  facet_wrap(~Site, scales = "free_y", nrow = 1) +
+  #Vertical lines for DEPLOYMENT
+  geom_vline(data = subset(Data_spring_all, Site == "Site A"), aes(xintercept = 78)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site B"), aes(xintercept = 82)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site C"), aes(xintercept = 81)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site D"), aes(xintercept = 82)) +
+  geom_vline(data = subset(Data_spring_all, Site == "Site E"), aes(xintercept = 92)) +
+  scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
+  ylab('No. eggs') +
+  xlab('') +
+  guides(shape = guide_legend(nrow = 3)) +
+  theme(plot.margin=unit(c(-1,0.1,-0.2,0.1),"cm"))
+#output
+Fig1 <- (ggarrange(
+    adults,
+    eggs,
+    labels = c("A","B"), vjust = c(-0.5,-0.5),
+    ncol = 1,
+    align="hv",common.legend = TRUE
+    ))
+ggsave(plot = Fig1, file = "Fig1.png", width = 17, height = 8, unit = "cm")
+
+#Summertime graphs of adults, eggs, and nymphs [Supplementary figure]
+adults <- ggplot(data = Data_summer, aes(x = day, y = Adults, shape = Trt, fill = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  scale_y_continuous(limits = c(0, NA)) + 
+  stat_summary(fun.y = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
+  stat_summary(fun.y = mean, geom = "point") +
+  facet_wrap(~Site, scales = "free_y", nrow = 1) +
+  #Vertical lines for REMOVAL
+  geom_vline(data = subset(Data, Site == "A"), aes(xintercept = 147)) +
+  geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 117)) + #extenday
+  #geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 211)) + #mylar
+  geom_vline(data = subset(Data, Site == "C"), aes(xintercept = 122)) + 
+  geom_vline(data = subset(Data, Site == "D"), aes(xintercept = 183)) +
+  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 144)) + #mylar
+  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 151)) + #extenday
+  #scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
+  ylab('No. adults') +
+  xlab('') +
+  guides(shape = guide_legend(nrow = 3))  +
+  theme(
+  strip.text = element_text(size = 10, hjust = 0),
+  plot.margin=unit(c(-0.2,0.1,-1,0.1),"cm")
+  )
+eggs <- ggplot(data = Data_summer, aes(x = day, y = Eggs, shape = Trt, fill = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  scale_y_continuous(limits = c(0, NA)) + 
+  stat_summary(fun.y = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
+  stat_summary(fun.y = mean, geom = "point") +
+  facet_wrap(~Site, scales = "free_y", nrow = 1) +
+  #Vertical lines for REMOVAL
+  geom_vline(data = subset(Data, Site == "A"), aes(xintercept = 147)) +
+  geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 117)) + #extenday
+  #geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 211)) + #mylar
+  geom_vline(data = subset(Data, Site == "C"), aes(xintercept = 122)) + 
+  geom_vline(data = subset(Data, Site == "D"), aes(xintercept = 183)) +
+  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 144)) + #mylar
+  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 151)) + #extenday
+  #scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
+  ylab('No. eggs') +
+  xlab('') +
+  guides(shape = guide_legend(nrow = 3)) +
+  theme(plot.margin=unit(c(-1,0.1,-0.2,0.1),"cm"))
+nymphs <- ggplot(data = Data_summer, aes(x = day, y = (Small+Big), shape = Trt, fill = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  scale_y_continuous(limits = c(0, NA)) + 
+  stat_summary(fun.y = mean, geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
+  stat_summary(fun.y = mean, geom = "point") +
+  facet_wrap(~Site, scales = "free_y", nrow = 1) +
+  #Vertical lines for REMOVAL
+  geom_vline(data = subset(Data, Site == "A"), aes(xintercept = 147)) +
+  geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 117)) + #extenday
+  #geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 211)) + #mylar
+  geom_vline(data = subset(Data, Site == "C"), aes(xintercept = 122)) + 
+  geom_vline(data = subset(Data, Site == "D"), aes(xintercept = 183)) +
+  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 144)) + #mylar
+  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 151)) + #extenday
+  #scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
+  ylab('No. nymphs') +
+  xlab('') +
+  guides(shape = guide_legend(nrow = 3)) 
+#output
+  FigS1 <- (ggarrange(
+    adults,
+    eggs,
+    nymphs,
+    ncol = 1,
+    align="hv",common.legend = TRUE
+    ))
+ggsave(plot = FigS1, file = "FigS1_summerdata.png", width = 17, height = 12, unit = "cm")
+
+```
+
+```{r Chunk 3 - Statistical analysis of pear psylla adults & eggs and visualization}
+
+#approach: treat each of the five sites as a block, so N = 5
+#calculate cumulative insect days for each life stage by site, then analyze with block as random factor
+
+#Adults
+#First, summarize the multiple counts per plot into one number per plot per site per visit
+Data_adults <- do.call(data.frame, 
+             aggregate(Adults~Phase+Date+day+Site+Trt, 
+                       data = Data, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+#Calculate cumulative insect days - adult taps
+#Build blank data frame
+CID_output <- data.frame(Season=character(), 
+                         Block=character(), 
+                         Treatment=character(), 
+                         CID=numeric(), 
+                         Days_sum=numeric())
+Data_adults$ID <- paste(Data_adults$Phase,Data_adults$Site,Data_adults$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
+IDs <- unique(Data_adults$ID)                                   #Get a list of the IDs
+for (value in IDs) {                                            #loop for each ID
+  Data_subset <- subset(Data_adults, ID == value)
+  row.names(Data_subset) <- NULL
+  for (row in 1:nrow(Data_subset)) {                          #loop to calculate within each ID
+    if(row == 1){
+      Insect_avg <- NA
+      Days_difference <- NA
+      Insectdays <- 0
+      Days <- 0
+      output <- data.frame(Insectdays,Days)
+    }
+    #pre-sample was only one date, so use the point data instead of trying to calculate CIDs
+    if(unique(Data_subset$Phase == "Pretreatment")){
+      Days <- 1
+      Insectdays <- Data_subset[row,"Adults.mean"]
+      output <- data.frame(Insectdays,Days)
+    }
+    if(row > 1){
+    Insect_current <- Data_subset[row,"Adults.mean"]
+    Insect_previous <- Data_subset[(row-1),"Adults.mean"]
+    Insect_avg <- (Insect_current + Insect_previous) / 2
+    Day_current <- as.numeric(Data_subset[row,"day"])
+    Day_previous <- as.numeric(Data_subset[row-1,"day"])
+    if(Day_current < Day_previous){                             #check for out-of-order dates
+      print("Error: Days not sorted chronologically")
+      print(value)
+    }
+    Days <- Day_current - Day_previous
+    Insectdays <- Insect_avg*Days
+    newrow <- data.frame(Insectdays,Days)
+    output <- rbind(output, newrow)
+    }
+  }
+  Season <- unique(Data_subset$Phase)
+  Block <- unique(Data_subset$Site)
+  Treatment <- unique(Data_subset$Trt)
+  CID <- sum(output$Insectdays)
+  Days_sum <- sum(output$Days)
+  CID_newrow <- data.frame(Season,Block,Treatment, CID, Days_sum)
+  CID_output <- rbind(CID_output, CID_newrow)
+}
+
+#Don't want want to analyze summer data due to reflective materials being removed at different times between sites
+CID_output <- subset(CID_output, Season != 'Leaves')
+CID_output$Season <- factor(CID_output$Season,
+                    levels=c("Pretreatment","Buds"),
+                    labels=c("Pre-installation", "Spring"))
+CID_output$Treatment <- factor(CID_output$Treatment,
+                    levels=c("Control","Extenday","Mylar"),
+                    labels=c("Ctrl", "R. fab.","M. film"))
+#Adults seasonal mean calculation
+CID_output$seasonalmean <- (CID_output$CID / CID_output$Days_sum)
+
+#Adults graph
+#since scale_y_log10 occurs before stat_summary, this backtransforms when used in stat_summary to get correct summary when we want to graph on log scale
+f1 <- function(x) {
+  log10(mean(10 ^ x)) 
+} 
+Fig2a <- ggplot(CID_output, aes(x = Treatment, y = seasonalmean)) +
+  geom_point(aes(group = Block), color = "grey") +
+  geom_line(aes(group = Block), color = "grey") +
+  stat_summary(fun = f1, colour = "black", geom = "point") +
+  geom_text(data = data.frame(x = c("Ctrl", "R. fab.","M. film"), y = 10, Season = "Pre-installation", label = "a"), 
+                   aes(x = x, y = y, label = label), size = 3) +
+  geom_text(data = data.frame(x = c("Ctrl", "R. fab.","M. film"), y = c(2.9,2.8,1.9), Season = "Spring", label = c("a","a","b")), 
+                   aes(x = x, y = y, label = label), size = 3) +
+  scale_y_log10() +
+  facet_wrap(~Season, scales = "free_y") +
+  ylab('Avg. adults') +
+  theme(strip.text = element_text(size = 10, hjust = 0),
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+
+#Adults statistical tests: pretreatment and spring
+for (test in unique(CID_output$Season)) {
+  Data_test <- subset(CID_output, Season == test)
+  model <- glmmTMB(formula = seasonalmean ~ Treatment + (1|Block), family = gaussian(link = "log"), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print("Pear psylla adults")
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+
+#summary with SEM for table
+Data_taps_analyzed <- do.call(data.frame, 
+                          aggregate(CID/Days_sum~Season+Treatment, 
+                                    data = CID_output, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+
+#Eggs
+#First, summarize the multiple counts per plot into one number per plot per site per visit
+Data_eggs <- do.call(data.frame, 
+             aggregate(Eggs~Phase+Date+day+Site+Trt, 
+                       data = Data, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+#Calculate cumulative insect days - eggs
+#Build blank data frame
+CID_output <- data.frame(Season=character(), 
+                         Block=character(), 
+                         Treatment=character(), 
+                         CID=numeric(), 
+                         Days_sum=numeric())
+Data_eggs$ID <- paste(Data_eggs$Phase,Data_eggs$Site,Data_eggs$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
+IDs <- unique(Data_eggs$ID)                                   #Get a list of the IDs
+for (value in IDs) {                                            #loop for each ID
+  Data_subset <- subset(Data_eggs, ID == value)
+  row.names(Data_subset) <- NULL
+  for (row in 1:nrow(Data_subset)) {                          #loop to calculate within each ID
+    if(row == 1){
+      Insect_avg <- NA
+      Days_difference <- NA
+      Insectdays <- 0
+      Days <- 0
+      output <- data.frame(Insectdays,Days)
+    }
+    #pre-sample was only one date, so use the point data instead of trying to calculate CIDs
+    if(unique(Data_subset$Phase == "Pretreatment")){
+      Days <- 1
+      Insectdays <- Data_subset[row,"Eggs.mean"]
+      output <- data.frame(Insectdays,Days)
+    }
+    if(row > 1){
+    Insect_current <- Data_subset[row,"Eggs.mean"]
+    Insect_previous <- Data_subset[(row-1),"Eggs.mean"]
+    Insect_avg <- (Insect_current + Insect_previous) / 2
+    Day_current <- as.numeric(Data_subset[row,"day"])
+    Day_previous <- as.numeric(Data_subset[row-1,"day"])
+    if(Day_current < Day_previous){                             #check for out-of-order dates
+      print("Error: Days not sorted chronologically")
+      print(value)
+    }
+    Days <- Day_current - Day_previous
+    Insectdays <- Insect_avg*Days
+    newrow <- data.frame(Insectdays,Days)
+    output <- rbind(output, newrow)
+    }
+  }
+  Season <- unique(Data_subset$Phase)
+  Block <- unique(Data_subset$Site)
+  Treatment <- unique(Data_subset$Trt)
+  CID <- sum(output$Insectdays)
+  Days_sum <- sum(output$Days)
+  CID_newrow <- data.frame(Season,Block,Treatment, CID, Days_sum)
+  CID_output <- rbind(CID_output, CID_newrow)
+}
+#Analysis
+#Don't want want to analyze summer data due to reflective materials being removed at different times between sites
+CID_output <- subset(CID_output, Season != 'Leaves')
+CID_output$Season <- factor(CID_output$Season,
+                    levels=c("Pretreatment","Buds"),
+                    labels=c("Pre-installation", "Spring"))
+CID_output$Treatment <- factor(CID_output$Treatment,
+                    levels=c("Control","Extenday","Mylar"),
+                    labels=c("Ctrl", "R. fab.","M. film"))
+f1 <- function(x) {
+  log10(mean(10 ^ x)) 
+} #since scale_y_log10 occurs before stat_summary, this backtransforms when used in stat_summary to get correct summary
+CID_output$seasonalmean <- (CID_output$CID / CID_output$Days_sum)
+Fig2b <- ggplot(CID_output, aes(x = Treatment, y = seasonalmean)) +
+  geom_point(aes(group = Block), color = "grey") +
+  geom_line(aes(group = Block), color = "grey") +
+  stat_summary(fun = mean, colour = "black", geom = "point") +
+  geom_text(data = data.frame(x = c("Ctrl", "R. fab.","M. film"), y = c(9.5,7,10), Season = "Pre-installation", label = c("a","b","a")), 
+                   aes(x = x, y = y, label = label), size = 3) +
+  geom_text(data = data.frame(x = c("Ctrl", "R. fab.","M. film"), y = c(45,45,40), Season = "Spring", label = "a"), 
+                   aes(x = x, y = y, label = label), size = 3) +
+  scale_y_continuous(limits = c(0,NA)) +
+  ylab('Avg. eggs') +
+  facet_wrap(~Season, scales = "free_y") +
+  theme(strip.text = element_text(size = 10, hjust = 0),
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+for (test in unique(CID_output$Season)) {
+  Data_test <- subset(CID_output, Season == test)
+  model <- glmmTMB(formula = seasonalmean ~ Treatment + (1|Block), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print("Pear psylla eggs")
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+#summary with SEM for table
+Data_taps_analyzed <- do.call(data.frame, 
+                          aggregate(CID/Days_sum~Season+Treatment, 
+                                    data = CID_output, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+
+#Visualization output
+  Fig2 <- (ggarrange(
+    Fig2a,
+    Fig2b,
+    ncol = 2,
+    labels = c("A", "B"),
+    align="hv",common.legend = TRUE
+    ))
+  
+ggsave(plot = Fig2, file = "Fig2.png", width = 17, height = 5, unit = "cm")
+
+```
+
+```{r Chunk 4 - other analysis and diagnostics}
+
+#summarize nymph counts in spring to check how abundant they were
+#reload data
+Data <- read_excel("2003 - data - beats and buds.xlsx",
+                   skip = 9,
+                   guess_max = 10000) #guessmax prevents columns with many initial banks being imported as a logical FALSE for not NAs
+Data <- subset(Data, day < 200) #Exclude the late sample in August since it was over a month divorced from previous samples
+Data <- subset(Data, !(Site == "E" & day == 77)) #exclude the early pre-treatment sample at site E so we only analyze the one sample closer to groundcover installation
+Data_spring_post <- subset(Data, Phase == 'Buds')
+
+#Summary small nymphs; they were rare in spring (e.g., not found at site E, max of 0.03 per leaf at site D):
+Data_smalls <- do.call(data.frame, 
+             aggregate(Small~day+Site+Trt, 
+                       data = Data_spring_post, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+Data_smalls <- do.call(data.frame, 
+             aggregate(Small.mean~Site, 
+                       data = Data_smalls, 
+                       function(x) 
+                       c(max = max(x), 
+                       count = length(x))))
+
+```
+
+

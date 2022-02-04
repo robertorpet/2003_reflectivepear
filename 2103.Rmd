@@ -1,0 +1,856 @@
+
+2103 project code, Robert Orpet, 21 Jan, 2022
+For: Reflective groundcovers implementation manuscript
+
+The purpose is to visualize and statistically analyze pear psylla data from a trial of reflective groundcovers at one organic orchards in 2021. Experimental units were plots within the one orchard.
+
+```{r, Chunk 1 - Setup}
+
+#Load packages
+library(readxl)
+library(ggplot2)
+library(ggpubr)
+library(glmmTMB)
+library(DHARMa)
+library(car)
+library(emmeans)
+
+#Load datasets
+Data_taps <- read_excel("2103 - data - taps.xlsx", skip = 9, guess_max = 10000)
+Data_buds <- read_excel("2103 - data - buds.xlsx", skip = 9, guess_max = 10000)
+Data_leaves <- read_excel("2103 - data - leaves.xlsx", skip = 9, guess_max = 10000)
+Data_fruit <- read_excel("2103 - data - fruit.xlsx", skip = 0, guess_max = 10000)
+Data_cards <- read_excel("2103 - data - cards.xlsx", skip = 9, guess_max = 10000)
+
+#I want to rename treatment labels for future graphs
+Data_taps$Trt <- factor(Data_taps$Trt,
+                    levels=c("Control","Extenday","Mylar"),
+                    labels=c("Control", "Reflective fabric","Metallized film"))
+Data_buds$Trt <- factor(Data_buds$Trt,
+                    levels=c("Control","Extenday","Mylar"),
+                    labels=c("Control", "Reflective fabric","Metallized film"))
+Data_leaves$Trt <- factor(Data_leaves$Trt,
+                    levels=c("Control","Extenday","Mylar"),
+                    labels=c("Control", "Reflective fabric","Metallized film"))
+
+#Data cleanup
+#average the repeated measures on plots within a sample day (e.g., calculate pear psylla adults per beat tray)
+Data_taps_campy <- do.call(data.frame, 
+             aggregate(Campy~Period+Date+Day+Block+Trt, 
+                       data = Data_taps, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+Data_taps <- do.call(data.frame, 
+             aggregate(PP~Period+Date+Day+Block+Trt, 
+                       data = Data_taps, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+Data_buds <- do.call(data.frame, 
+             aggregate(cbind(Wood.eggs,Top.eggs,Nymph.small,Nymph.big)~Period+Date+Day+Block+Trt, 
+                       data = Data_buds, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+Data_fruit <- do.call(data.frame,
+              aggregate(cbind(Weight_g,Length_mm, Width_mm,Sunburn_percentarea)~Block+Treatment,
+                        data = Data_fruit,
+                        function(x)
+                        c(mean = mean(x),
+                        count = length(x),
+                        sd = sd(x))))
+
+```
+
+```{r Chunk 2 - Visualization}
+
+#Theme for graphs
+theme_new <- theme_set(theme_bw())
+theme_new <- theme_update(
+  plot.background = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.title.x = element_blank(),
+  axis.text.x = element_text(color = 'black'),
+  axis.text.y = element_text(color = 'black'),
+  legend.position=c(1,1),
+  legend.justification=c(1,0),
+  legend.box="vertical",
+  legend.direction='vertical',
+  legend.box.margin=margin(0,0,0,0),
+  legend.title = element_blank(),
+  legend.key.size = unit(0.75, 'lines')
+)
+
+#graph of beginning up until summer switch to bud and leaf counts
+#vertical line at day 76 indicates installation of mylar and Extenday
+#sprays: kaolin (day 75 and 106), oil (day 126)
+adults <- ggplot((subset(Data_taps, Day < 135)), aes(x = Day, y = PP.mean, fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  scale_linetype(guide = guide_legend(override.aes = list(alpha = 0) ) )+ #to make legend invisible
+      #Reflective manual annotation
+      geom_vline(xintercept = 76) +
+      geom_text(aes(x = 76,y=13,label = "Installation"), vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      #Kaolin manual annotation
+      geom_vline(xintercept = 75, color = "grey") + geom_vline(xintercept = 106, color = "grey") +
+      geom_text(aes(x = c(75),y=13,label = "Kaolin"), vjust = "bottom",hjust = "right", color = 'grey', angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      geom_text(aes(x = c(106),y=13,label = "Kaolin"), vjust = "top",hjust = "right", color = 'grey', angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      #Oil manual annotation
+      geom_vline(xintercept = 126, color = "grey") +
+      geom_text(aes(x = 126,y=13,label = "Oil"),vjust = "top", hjust = "right", color = "grey", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+      scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+      scale_y_continuous("No. adults/tray")
+eggs <- ggplot((Data_buds), aes(x = Day, y = (Wood.eggs.mean+Top.eggs.mean), fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      geom_vline(xintercept = 76) +
+      geom_vline(xintercept = 75, color = "grey") + geom_vline(xintercept = 106, color = "grey") +
+      geom_vline(xintercept = 126, color = "grey") +
+      stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+      scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+      scale_y_continuous("No. eggs/bud")
+nymphs <- ggplot((Data_buds), aes(x = Day, y = (Nymph.small.mean+Nymph.big.mean), fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      geom_vline(xintercept = 76) +
+      geom_vline(xintercept = 75, color = "grey") + geom_vline(xintercept = 106, color = "grey") +
+      geom_vline(xintercept = 126, color = "grey") +
+      stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+      scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+      scale_y_continuous("No. nymphs/bud")
+campy <- ggplot((Data_taps_campy), aes(x = Day, y = Campy.mean, fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      geom_vline(xintercept = 76) +
+      geom_vline(xintercept = 75, color = "grey") + geom_vline(xintercept = 106, color = "grey") +
+      geom_vline(xintercept = 126, color = "grey") +
+      stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+      scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+      scale_y_continuous("No. campy/tray", limits = c(0,0.3), breaks = c(0.0,0.1,0.2,0.3))
+Fig2103_1a<-(ggarrange(
+    adults + theme(legend.text = element_text(color = "transparent")),
+    eggs,
+    nymphs,
+    campy,
+    ncol = 1,
+    labels = c("A","B","C","D"), vjust = c(-0.5,-0.5,-0.5),
+    align="hv", common.legend = TRUE
+    ))
+#graph from summer to end
+#vertical line at day 220 indicates removal of mylar and Extenday
+#sprays: oil+Microna (137), oil+Neemix (day 145,160,188,215), cinnerate (day 230)
+
+adults <- ggplot((subset(Data_taps, Day > 135)), aes(x = Day, y = PP.mean, fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      #manually annotate reflective
+      geom_vline(xintercept = 220) + #reflective
+      geom_text(aes(x = 220,y=9,label = "Removal"),vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      #Manually annotate Microna + oil spray
+      geom_vline(xintercept = 137, color = "grey") + #Microna
+      geom_vline(xintercept = c(137,230), color = "grey") + #oil or cinnerate alone
+      geom_text(aes(x = 137,y=9,label = "CaCO[3] + oil"), parse = TRUE, color = 'grey',vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      geom_text(aes(x = 230,y=9,label = "Cinnamon oil"),color='grey',vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      #Manually annorate Neemix + oil sprays
+      geom_vline(xintercept = c(145,160,188,215), color = "grey",) + #oil+Neemix
+      geom_text(aes(x = 145,y=9,label = "Azadirachtin + oil"),color = "grey", vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      geom_text(aes(x = 160,y=9,label = "Azadirachtin + oil"),color = "grey",vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      geom_text(aes(x = 188,y=9,label = "Azadirachtin + oil"),color = "grey",vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      geom_text(aes(x = 215,y=9,label = "Azadirachtin + oil"),color = "grey",vjust = "top", hjust = "right", angle = 90, size = 2.5,check_overlap = TRUE,show.legend = FALSE) +
+      stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+      scale_y_continuous("No. adults/tray") +
+      scale_x_continuous("Date", limits = c(136,292),
+                         breaks = c(152,182,213,244,274),
+                         labels = c("1-Jun","1-Jul","1-Aug","1-Sep","1-Oct"))
+eggs <- ggplot((subset(Data_leaves, Day > 135)), aes(x = Day, y = (Eggs/30), fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      geom_vline(xintercept = 220) + #reflective
+      geom_vline(xintercept = 137, color = "grey") + #Microna
+      geom_vline(xintercept = c(137,230), color = "grey") + #oil or cinnerate alone
+      geom_vline(xintercept = c(145,160,188,215), color = "grey") + #oil+Neemix    
+  stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date", limits = c(136,292),
+                         breaks = c(152,182,213,244,274),
+                         labels = c("1-Jun","1-Jul","1-Aug","1-Sep","1-Oct")) +
+      scale_y_continuous("No. eggs/leaf")
+nymphs <- ggplot((subset(Data_leaves, Day > 135)), aes(x = Day, y = ((Small+Big)/30), fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      geom_vline(xintercept = 220) + #reflective
+      geom_vline(xintercept = 137, color = "grey") + #Microna
+      geom_vline(xintercept = c(137,230), color = "grey") + #oil or cinnerate alone
+      geom_vline(xintercept = c(145,160,188,215), color = "grey") + #oil+Neemix
+  stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date", limits = c(136,292),
+                         breaks = c(152,182,213,244,274),
+                         labels = c("1-Jun","1-Jul","1-Aug","1-Sep","1-Oct")) +
+      scale_y_continuous("No. nymphs/leaf")
+campy <- ggplot((subset(Data_taps_campy, Day > 135)), aes(x = Day, y = Campy.mean, fill = Trt, shape = Trt, linetype = Trt, color = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+      geom_vline(xintercept = 220) + #reflective
+      geom_vline(xintercept = 137, color = "grey") + #Microna
+      geom_vline(xintercept = c(137,230), color = "grey") + #oil or cinnerate alone
+      geom_vline(xintercept = c(145,160,188,215), color = "grey") + #oil+Neemix
+  stat_summary(fun = "mean", geom = "line") +
+      stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+      stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date", limits = c(136,292),
+                         breaks = c(152,182,213,244,274),
+                         labels = c("1-Jun","1-Jul","1-Aug","1-Sep","1-Oct")) +
+      scale_y_continuous("No. campy/tray", limits = c(0,0.3), breaks = c(0.0,0.1,0.2,0.3))
+#output
+  Fig2103_1b <- (ggarrange(
+    adults,
+    eggs,
+    nymphs,
+    campy,
+    ncol = 1,
+    align="hv",common.legend = TRUE
+    ))
+
+Fig2103_full <- ggarrange(
+  Fig2103_1a,
+  Fig2103_1b,
+  widths = c(0.5, 1)
+)
+  
+ggsave(plot = Fig2103_full, file = "Fig3.png", width = 17, height = 16, unit = "cm")
+
+
+
+
+
+
+#Sticky cards
+p_adultcards <- ggplot(Data_cards, aes(x = Day_mid, y = PP/Days, color = Trt, fill = Trt, shape = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date",
+                         breaks = c(182,213,244),
+                         labels = c("1-Jul","1-Aug","1-Sep")) +
+  geom_vline(xintercept = 220) #reflective groundcover removal
+
+p_trechcards <- ggplot(Data_cards, aes(x = Day_mid, y = Trech/Days, color = Trt, fill = Trt, shape = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date",
+                         breaks = c(182,213,244),
+                         labels = c("1-Jul","1-Aug","1-Sep")) +
+  geom_vline(xintercept = 220) #reflective groundcover removal
+
+p_derae <- ggplot(Data_cards, aes(x = Day_mid, y = Derae/Days, color = Trt, fill = Trt, shape = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date",
+                         breaks = c(182,213,244),
+                         labels = c("1-Jul","1-Aug","1-Sep")) +
+  geom_vline(xintercept = 220) #reflective groundcover removal
+
+p_campy <- ggplot(Data_cards, aes(x = Day_mid, y = Campy/Days, color = Trt, fill = Trt, shape = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date",
+                         breaks = c(182,213,244),
+                         labels = c("1-Jul","1-Aug","1-Sep")) +
+  geom_vline(xintercept = 220) #reflective groundcover removal
+
+p_blacks <- ggplot(Data_cards, aes(x = Day_mid, y = Black/Days, color = Trt, fill = Trt, shape = Trt)) +
+  scale_fill_manual(values = c('black', 'white', 'grey')) +
+  scale_color_manual(values = c('black', 'grey', 'black')) +
+  scale_shape_manual(values = c(21,23,23)) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun = "mean", geom = "point") +
+  scale_x_continuous("Date",
+                         breaks = c(182,213,244),
+                         labels = c("1-Jul","1-Aug","1-Sep")) +
+  geom_vline(xintercept = 220) #reflective groundcover removal
+
+  Fig2103_stickycard <- (ggarrange(
+    p_adultcards,
+    p_trechcards,
+    p_campy,
+    p_derae,
+    p_blacks,
+    ncol = 1,
+    align="hv",common.legend = TRUE
+    ))
+
+```
+
+Statistical analysis
+```{r}
+###################################
+#Part 1/3. INSECT DAY CALCULATIONS#
+###################################
+#Calculate cumulative insect days - adult taps
+#________________________________________________
+#Build blank data frame
+CID_output <- data.frame(Season=character(), 
+                         Block=character(), 
+                         Treatment=character(), 
+                         CID=numeric(), 
+                         Days_sum=numeric())
+Data_taps$ID <- paste(Data_taps$Period,Data_taps$Block,Data_taps$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
+IDs <- unique(Data_taps$ID)                                     #Get a list of the IDs
+for (value in IDs) {                                            #loop for each ID
+  Data_taps_subset <- subset(Data_taps, ID == value)
+  row.names(Data_taps_subset) <- NULL
+  for (row in 1:nrow(Data_taps_subset)) {                          #loop to calculate within each ID
+    if(row == 1){
+      Insect_avg <- NA
+      Days_difference <- NA
+      Insectdays <- 0
+      Days <- 0
+      output <- data.frame(Insectdays,Days)
+    }
+    #pre-sample was only one date, so use the point data instead of trying to calculate CIDs
+    if(unique(Data_taps_subset$Period == "Pre")){
+      Days <- 1
+      Insectdays <- Data_taps_subset[row,"PP.mean"]
+      output <- data.frame(Insectdays,Days)
+    }
+    if(row > 1){
+    Insect_current <- Data_taps_subset[row,"PP.mean"]
+    Insect_previous <- Data_taps_subset[(row-1),"PP.mean"]
+    Insect_avg <- (Insect_current + Insect_previous) / 2
+    Day_current <- as.numeric(Data_taps_subset[row,"Day"])
+    Day_previous <- as.numeric(Data_taps_subset[row-1,"Day"])
+    if(Day_current < Day_previous){                             #check for out-of-order dates
+      print("Error: Days not sorted chronologically")
+      print(value)
+    }
+    Days <- Day_current - Day_previous
+    Insectdays <- Insect_avg*Days
+    newrow <- data.frame(Insectdays,Days)
+    output <- rbind(output, newrow)
+    }
+  }
+  Season <- unique(Data_taps_subset$Period)
+  Block <- unique(Data_taps_subset$Block)
+  Treatment <- unique(Data_taps_subset$Trt)
+  CID <- sum(output$Insectdays)
+  Days_sum <- sum(output$Days)
+  CID_newrow <- data.frame(Season,Block, Treatment, CID, Days_sum)
+  CID_output <- rbind(CID_output, CID_newrow)
+}
+#Calculate cumulative insect days - campy taps
+#________________________________________________
+#Build blank data frame
+CID_output_campy <- data.frame(Season=character(), 
+                         Block=character(), 
+                         Treatment=character(), 
+                         CID=numeric(), 
+                         Days_sum=numeric())
+Data_taps_campy$ID <- paste(Data_taps_campy$Period,Data_taps_campy$Block,Data_taps_campy$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
+IDs <- unique(Data_taps_campy$ID)                               #Get a list of the IDs
+for (value in IDs) {                                            #loop for each ID
+  Data_taps_campy_subset <- subset(Data_taps_campy, ID == value)
+  row.names(Data_taps_campy_subset) <- NULL
+  for (row in 1:nrow(Data_taps_campy_subset)) {                       #loop to calculate within each ID
+    if(row == 1){
+      Insect_avg <- NA
+      Days_difference <- NA
+      Insectdays <- 0
+      Days <- 0
+      output <- data.frame(Insectdays,Days)
+    }
+    #pre-sample was only one date, so use the point data instead of trying to calculate CIDs
+    if(unique(Data_taps_campy_subset$Period == "Pre")){
+      Days <- 1
+      Insectdays <- Data_taps_campy_subset[row,"Campy.mean"]
+      output <- data.frame(Insectdays,Days)
+    }
+    if(row > 1){
+    Insect_current <- Data_taps_campy_subset[row,"Campy.mean"]
+    Insect_previous <- Data_taps_campy_subset[(row-1),"Campy.mean"]
+    Insect_avg <- (Insect_current + Insect_previous) / 2
+    Day_current <- as.numeric(Data_taps_campy_subset[row,"Day"])
+    Day_previous <- as.numeric(Data_taps_campy_subset[row-1,"Day"])
+    if(Day_current < Day_previous){                             #check for out-of-order dates
+      print("Error: Days not sorted chronologically")
+      print(value)
+    }
+    Days <- Day_current - Day_previous
+    Insectdays <- Insect_avg*Days
+    newrow <- data.frame(Insectdays,Days)
+    output <- rbind(output, newrow)
+    }
+  }
+  Season <- unique(Data_taps_campy_subset$Period)
+  Block <- unique(Data_taps_campy_subset$Block)
+  Treatment <- unique(Data_taps_campy_subset$Trt)
+  CID <- sum(output$Insectdays)
+  Days_sum <- sum(output$Days)
+  CID_newrow <- data.frame(Season,Block, Treatment, CID, Days_sum)
+  CID_output_campy <- rbind(CID_output_campy, CID_newrow)
+}
+#Calculate cumulative insect days - bud counts (eggs, nymphs)
+#____________________________________________________
+CID_output_buds <- data.frame(Season=character(), 
+                         Block=character(), 
+                         Treatment=character(), 
+                         CID_egg=numeric(), 
+                         CID_nymph=numeric(), 
+                         Days_sum=numeric())
+Data_CIDcalc <- Data_buds
+Data_CIDcalc$ID <- paste(Data_CIDcalc$Period,Data_CIDcalc$Block,Data_CIDcalc$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
+IDs <- unique(Data_CIDcalc$ID)                                     #Get a list of the IDs
+for (value in IDs) {                                            #loop for each ID
+  Data_CIDcalc_subset <- subset(Data_CIDcalc, ID == value)
+  row.names(Data_CIDcalc_subset) <- NULL
+  for (row in 1:nrow(Data_CIDcalc_subset)) {                          #loop to calculate within each ID
+    if(row == 1){
+      Egg_avg <- NA
+      Nymph_avg <- NA
+      Days_difference <- NA
+      Eggdays <- 0
+      Nymphdays <- 0
+      Days <- 0
+      output <- data.frame(Eggdays,Nymphdays,Days)
+    }
+    else{
+    Egg_current <- (Data_CIDcalc_subset[row,"Wood.eggs.mean"] + Data_CIDcalc_subset[row,"Top.eggs.mean"])
+    Egg_previous <- Data_CIDcalc_subset[(row-1),"Wood.eggs.mean"] + Data_CIDcalc_subset[row-1,"Top.eggs.mean"]
+    Egg_avg <- (Egg_current + Egg_previous) / 2
+    Nymph_current <- Data_CIDcalc_subset[row,"Nymph.small.mean"] + Data_CIDcalc_subset[row,"Nymph.big.mean"]
+    Nymph_previous <- Data_CIDcalc_subset[(row-1),"Nymph.small.mean"] + Data_CIDcalc_subset[row-1,"Nymph.big.mean"]
+    Nymph_avg <- (Nymph_current + Nymph_previous) / 2
+    Day_current <- as.numeric(Data_CIDcalc_subset[row,"Day"])
+    Day_previous <- as.numeric(Data_CIDcalc_subset[row-1,"Day"])
+    if(Day_current < Day_previous){                             #check for out-of-order dates
+      print("Error: Days not sorted chronologically")
+      print(value)
+    }
+    Days <- Day_current - Day_previous
+    Eggdays <- Egg_avg*Days
+    Nymphdays <- Nymph_avg*Days
+    newrow <- data.frame(Eggdays,Nymphdays,Days)
+    output <- rbind(output, newrow)
+    }
+  }
+  Season <- unique(Data_CIDcalc_subset$Period)
+  Block <- unique(Data_CIDcalc_subset$Block)
+  Treatment <- unique(Data_CIDcalc_subset$Trt)
+  CID_egg <- sum(output$Eggdays)
+  CID_nymph <- sum(output$Nymphdays)
+  Days_sum <- sum(output$Days)
+  CID_newrow <- data.frame(Season,Block, Treatment, CID_egg, CID_nymph, Days_sum)
+  CID_output_buds <- rbind(CID_output_buds, CID_newrow)
+}
+#Calculate cumulative insect days - leaf counts (eggs, nymphs)
+#____________________________________________________________
+CID_output_leaf <- data.frame(Season=character(), 
+                         Block=character(), 
+                         Treatment=character(), 
+                         CID_egg=numeric(), 
+                         CID_nymph=numeric(),
+                         CID_tsm=numeric(),
+                         Days_sum=numeric())
+Data_CIDcalc <- Data_leaves
+Data_CIDcalc$ID <- paste(Data_CIDcalc$Period,Data_CIDcalc$Block,Data_CIDcalc$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
+IDs <- unique(Data_CIDcalc$ID)                                     #Get a list of the IDs
+for (value in IDs) {                                            #loop for each ID
+  Data_CIDcalc_subset <- subset(Data_CIDcalc, ID == value)
+  row.names(Data_CIDcalc_subset) <- NULL
+  for (row in 1:nrow(Data_CIDcalc_subset)) {                          #loop to calculate within each ID
+    if(row == 1){
+      Egg_avg <- NA
+      Nymph_avg <- NA
+      tsm_avg <- NA
+      Days_difference <- NA
+      Eggdays <- 0
+      Nymphdays <- 0
+      tsmdays <- 0
+      Days <- 0
+      output <- data.frame(Eggdays,Nymphdays,tsmdays,Days)
+    }
+    else{
+    Egg_current <-Data_CIDcalc_subset[row,"Eggs"]
+    Egg_previous <- Data_CIDcalc_subset[(row-1),"Eggs"]
+    Egg_avg <- (Egg_current + Egg_previous) / 2
+    Nymph_current <- Data_CIDcalc_subset[row,"Small"] + Data_CIDcalc_subset[row,"Big"]
+    Nymph_previous <- Data_CIDcalc_subset[(row-1),"Small"] + Data_CIDcalc_subset[row-1,"Big"]
+    Nymph_avg <- (Nymph_current + Nymph_previous) / 2
+    tsm_current <- Data_CIDcalc_subset[row,"TSM"] + Data_CIDcalc_subset[row,"TSM"]
+    tsm_previous <- Data_CIDcalc_subset[(row-1),"TSM"] + Data_CIDcalc_subset[row-1,"TSM"]
+    tsm_avg <- (tsm_current + tsm_previous) / 2
+    Day_current <- as.numeric(Data_CIDcalc_subset[row,"Day"])
+    Day_previous <- as.numeric(Data_CIDcalc_subset[row-1,"Day"])
+    if(Day_current < Day_previous){                             #check for out-of-order dates
+      print("Error: Days not sorted chronologically")
+      print(value)
+    }
+    Days <- Day_current - Day_previous
+    Eggdays <- Egg_avg*Days
+    Nymphdays <- Nymph_avg*Days
+    tsmdays <- tsm_avg*Days
+    newrow <- data.frame(Eggdays,Nymphdays,tsmdays, Days)
+    colnames(newrow) <- c('Eggdays','Nymphdays','tsmdays','Days')
+    output <- rbind(output, newrow)
+    }
+  }
+  Season <- unique(Data_CIDcalc_subset$Period)
+  Block <- unique(Data_CIDcalc_subset$Block)
+  Treatment <- unique(Data_CIDcalc_subset$Trt)
+  CID_egg <- sum(output$Eggdays)
+  CID_nymph <- sum(output$Nymphdays)
+  CID_tsm <- sum(output$tsmdays)
+  Days_sum <- sum(output$Days)
+  CID_newrow <- data.frame(Season,Block, Treatment, CID_egg, CID_nymph, CID_tsm, Days_sum)
+  CID_output_leaf <- rbind(CID_output_leaf, CID_newrow)
+}
+
+#calculate cumulative trap days for sticky card data for spring and fall
+Data_cards_spring <- subset(Data_cards, Collected_day < 220) #data from June 16 up to August 8 (reflective removal day; last card for this period is Aug 6)
+Data_cards_fall <- subset(Data_cards, Collected_day > 220) #data from August 8 to October 4
+
+Data_cards_spring_cumulative <- do.call(data.frame, 
+                          aggregate(cbind(PP,Trech,Derae,Campy,Casey,Twospot,Conv,Spotless,Black,Anthocoris,Orius,Days)~Block+Trt, 
+                                    data = Data_cards_spring, 
+                                    function(x) 
+                                    c(sum = sum(x))))
+Data_cards_spring_cumulative$Coccinellidae <- (Data_cards_spring_cumulative$Casey +
+                                                 Data_cards_spring_cumulative$Twospot +
+                                                 Data_cards_spring_cumulative$Conv +
+                                                 Data_cards_spring_cumulative$Spotless)
+Data_cards_spring_cumulative$Anthocoridae <- (Data_cards_spring_cumulative$Anthocoris +
+                                                 Data_cards_spring_cumulative$Orius)
+
+Data_cards_fall_cumulative <- do.call(data.frame, 
+                          aggregate(cbind(PP,Trech,Derae,Campy,Casey,Twospot,Conv,Spotless,Black,Anthocoris,Orius,Days)~Block+Trt, 
+                                    data = Data_cards_fall, 
+                                    function(x) 
+                                    c(sum = sum(x))))
+Data_cards_fall_cumulative$Coccinellidae <- (Data_cards_fall_cumulative$Casey +
+                                                 Data_cards_fall_cumulative$Twospot +
+                                                 Data_cards_fall_cumulative$Conv +
+                                                 Data_cards_fall_cumulative$Spotless)
+Data_cards_fall_cumulative$Anthocoridae <- (Data_cards_fall_cumulative$Anthocoris +
+                                                 Data_cards_fall_cumulative$Orius)
+#########################
+#Part 2/3. Insect models#
+#########################
+
+#PP adults CID
+#_______________________________________________
+ggplot(CID_output, aes(x = Treatment, y = CID)) +
+  geom_point() +
+  facet_wrap(~Season)
+for (test in unique(CID_output$Season)) {
+  print("adults")
+  Data_test <- subset(CID_output, Season == test)
+  model <- glmmTMB(formula = CID ~ Treatment + (1|Block), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+
+#summary with SEM for table
+Data_taps_analyzed <- do.call(data.frame, 
+                          aggregate(CID/Days_sum~Season+Treatment, 
+                                    data = CID_output, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+
+#Bud eggs and nymphs CID
+#________________________________________________________________________
+ggplot(CID_output_buds, aes(x = Treatment, y = CID_egg)) +
+  geom_point() +
+  facet_wrap(~Season)
+ggplot(CID_output_buds, aes(x = Treatment, y = CID_nymph)) +
+  geom_point() +
+  facet_wrap(~Season)
+#egg test
+for (test in unique(CID_output_buds$Season)) {
+  Data_test <- subset(CID_output_buds, Season == test)
+  model <- glmmTMB(formula = CID_egg ~ Treatment + (1|Block), family = gaussian(link = "log"), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+#summary with SEM for table
+Data_budeggs_analyzed <- do.call(data.frame, 
+                          aggregate(CID_egg/Days_sum~Season+Treatment, 
+                                    data = CID_output_buds, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+#nymph test
+for (test in unique(CID_output_buds$Season)) {
+  Data_test <- subset(CID_output_buds, Season == test)
+  model <- glmmTMB(formula = CID_nymph ~ Treatment + (1|Block), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+#summary with SEM for table
+Data_buds_analyzed <- do.call(data.frame, 
+                          aggregate(cbind(CID_egg/Days_sum,CID_nymph/Days_sum)~Season+Treatment, 
+                                    data = CID_output_buds, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+#Leaf eggs and nymphs CID
+ggplot(CID_output_leaf, aes(x = Treatment, y = CID_egg)) +
+  geom_point() +
+  facet_wrap(~Season)
+ggplot(CID_output_leaf, aes(x = Treatment, y = CID_nymph)) +
+  geom_point() +
+  facet_wrap(~Season)
+ggplot(CID_output_leaf, aes(x = Treatment, y = CID_tsm)) +
+  geom_point() +
+  facet_wrap(~Season)
+#Eggs for summer and fall
+print("eggs, fall")
+  Data_test <- subset(CID_output_leaf, Season == "Fall")
+  model <- glmmTMB(formula = CID_egg ~ Treatment + (1|Block), data = Data_test, family = gaussian(link = "log"))
+  plot(simulateResiduals(model))
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+print("eggs, summer")
+  Data_test <- subset(CID_output_leaf, Season == "Summer")
+  model <- glmmTMB(formula = CID_egg ~ Treatment + (1|Block), data = Data_test, family = gaussian(link = "log"))
+  plot(simulateResiduals(model))
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+
+  Data_leafeggs_analyzed <- do.call(data.frame, 
+                  aggregate(cbind(CID_egg/Days_sum)~Season+Treatment, 
+                                    data = CID_output_leaf, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+  
+  
+#nymphs for summer and fall
+for (test in unique(CID_output_leaf$Season)) {
+  Data_test <- subset(CID_output_leaf, Season == test)
+  model <- glmmTMB(formula = CID_nymph ~ Treatment + (1|Block), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+  Data_leaf_analyzed <- do.call(data.frame, 
+  aggregate(cbind(CID_nymph/Days_sum)~Season+Treatment, 
+                                    data = CID_output_leaf, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+
+#mites for summer and fall
+  for (test in unique(CID_output_leaf$Season)) {
+  Data_test <- subset(CID_output_leaf, Season == test)
+  model <- glmmTMB(formula = CID_tsm ~ Treatment + (1|Block), data = Data_test,family = gaussian(link = "log"))
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+  Data_leaf_analzyed <- do.call(data.frame, 
+  aggregate(cbind(CID_tsm/Days_sum)~Season+Treatment, 
+                                    data = CID_output_leaf, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+
+for (test in unique(CID_output_leaf$Season)) {
+  Data_test <- subset(CID_output_leaf, Season == test)
+  model <- glmmTMB(formula = CID_tsm ~ Treatment + (1|Block), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+
+#campy taps
+print("Campylomma from taps")
+CID_output_campy <- subset(CID_output_campy, Season != "Pre") #no insects found
+CID_output_campy <- subset(CID_output_campy, Season != "Spring") #no insects found
+CID_output_campy <- subset(CID_output_campy, Season != "Fall") #only 4 insects found
+
+  for (test in unique(CID_output_campy$Season)) {
+  Data_test <- subset(CID_output_campy, Season == test)
+  model <- glmmTMB(formula = CID ~ Treatment + (1|Block), data = Data_test)
+  plot(simulateResiduals(model))
+  print(test)
+  print(Anova(model))
+  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
+  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
+}
+  Data_campy_analyzed <- do.call(data.frame, 
+  aggregate((CID/Days_sum)~Season+Treatment, 
+                                    data = CID_output_campy, 
+                                    function(x) 
+                                    c(mean = mean(x), 
+                                      count = length(x),
+                                      SEM = sd(x)/sqrt(length(x)))))
+  ggplot(CID_output_campy, aes(x = Treatment, y = CID)) +
+  geom_point() +
+  facet_wrap(~Season)
+
+
+##fruit data
+
+fruitmodel_weight <- glmmTMB(formula = Weight_g.mean ~ Treatment + (1|Block), data = Data_fruit)
+plot(simulateResiduals(fruitmodel_weight))
+  print(Anova(fruitmodel_weight))
+
+fruitmodel_length <- glmmTMB(formula = Length_mm.mean ~ Treatment + (1|Block), data = Data_fruit)
+plot(simulateResiduals(fruitmodel_length))
+  print(Anova(fruitmodel_length))
+  
+fruitmodel_width <- glmmTMB(formula = Width_mm.mean ~ Treatment + (1|Block), data = Data_fruit)
+plot(simulateResiduals(fruitmodel_width))
+  print(Anova(fruitmodel_width))
+  
+fruitmodel_sunburn <- glmmTMB(formula = Sunburn_percentarea.mean ~ Treatment + (1|Block), data = Data_fruit)
+plot(simulateResiduals(fruitmodel_sunburn))
+  print(Anova(fruitmodel_sunburn))
+
+Data_fruitsummary <- do.call(data.frame, 
+             aggregate(cbind(Weight_g.mean,
+                             Length_mm.mean,
+                             Width_mm.mean,
+                             Sunburn_percentarea.mean)
+                             ~Treatment, 
+                       data = Data_fruit, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x),
+                       SEM = sd(x)/sqrt(length(x)))))
+
+#Spring sticky card data
+print("Sticky cards spring")
+print("adults")
+m_cardsPP <- glmmTMB(formula = PP ~ Trt + (1|Block), data = Data_cards_spring_cumulative,family = nbinom1)
+plot(simulateResiduals(m_cardsPP))
+print(Anova(m_cardsPP))
+print(emmeans(m_cardsPP, list(pairwise ~ Trt), adjust = "tukey"))
+print("trechs")
+m_cardsPP <- glmmTMB(formula = Trech ~ Trt + (1|Block), data = Data_cards_spring_cumulative, family = nbinom1)
+plot(simulateResiduals(m_cardsPP))
+print(Anova(m_cardsPP))
+print(emmeans(m_cardsPP, list(pairwise ~ Trt), adjust = "tukey"))
+print("campy")
+m_cardsPP <- glmmTMB(formula = Campy ~ Trt + (1|Block), data = Data_cards_spring_cumulative, family = nbinom1)
+plot(simulateResiduals(m_cardsPP))
+print(Anova(m_cardsPP))
+print(emmeans(m_cardsPP, list(pairwise ~ Trt), adjust = "tukey"))
+
+Data_cards_spring_analyzed <- do.call(data.frame, 
+             aggregate(cbind(PP,
+                             Trech,
+                             Derae,
+                             Campy,
+                             Coccinellidae,
+                             Anthocoridae,
+                             Black
+                             )
+                             ~Trt, 
+                       data = Data_cards_spring_cumulative, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       SEM = sd(x)/sqrt(length(x)))))
+
+#Fall sticky card data
+print("Sticky cards fall")
+print("adults")
+m_cardsPP <- glmmTMB(formula = PP ~ Trt + (1|Block), data = Data_cards_fall_cumulative,family = nbinom1)
+plot(simulateResiduals(m_cardsPP))
+print(Anova(m_cardsPP))
+print(emmeans(m_cardsPP, list(pairwise ~ Trt), adjust = "tukey"))
+print("trechs")
+m_cardsPP <- glmmTMB(formula = Trech ~ Trt + (1|Block), data = Data_cards_fall_cumulative, family = nbinom1)
+plot(simulateResiduals(m_cardsPP))
+print(Anova(m_cardsPP))
+print(emmeans(m_cardsPP, list(pairwise ~ Trt), adjust = "tukey"))
+print("campy")
+m_cardsPP <- glmmTMB(formula = Campy ~ Trt + (1|Block), data = Data_cards_fall_cumulative, family = nbinom1)
+plot(simulateResiduals(m_cardsPP))
+print(Anova(m_cardsPP))
+print(emmeans(m_cardsPP, list(pairwise ~ Trt), adjust = "tukey"))
+
+Data_cards_fall_analyzed <- do.call(data.frame, 
+             aggregate(cbind(PP,
+                             Trech,
+                             Derae,
+                             Campy,
+                             Coccinellidae,
+                             Anthocoridae,
+                             Black
+                             )
+                             ~Trt, 
+                       data = Data_cards_fall_cumulative, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       SEM = sd(x)/sqrt(length(x)))))
+
+
+
+
+
+
+```
