@@ -1,10 +1,19 @@
 
-2003 project code, Robert Orpet, 21 Jan, 2022
+2003 project code, Robert Orpet, 8 April, 2022
 For: Reflective groundcovers implementation manuscript
 
-The purpose is to visualize and statistically analyze pear psylla data from a trial of reflective groundcovers at five orchards in 2020. Experimental units are orchards.
+Design: randomized complete block with three treatments (control, reflective fabric (= Extenday), metallized film (= mylar)). Blocks are pear orchards (referred to as block or site).
 
-```{r Chunk 1 - Setup}
+Sampling: there were pre-treatment and post-treatment samples. Each sample included multiple measurements on the same plot. There were multiple post-treatment samples through spring. In summer, cooperators removed treatments at variable timings, so analysis focuses on spring.
+
+Analysis approach: analyses were repeated with multiple approaches for comparison because there are multiple philosophies on use of random effects and mixed models.
+Method 1. summarize repeated measures within plots with average, summarize repeated measures across time post-treatment with cumulative insect-days per day, use random effect for blocks. Uses glmmTMB()
+Method 2. as method 1, but uses lme()
+Method 3. as method 1, but fixed effect for block and uses aov()
+Method 4. no summarizing, use random effects for plots nested within block, and use negative binomial distribution. Uses glmmTMB()
+
+
+```{r Chunk 1 Setup}
 
 #Load packages
 library(readxl)
@@ -14,32 +23,29 @@ library(glmmTMB)
 library(DHARMa)
 library(car)
 library(emmeans)
+library(nlme)
 
-#Load and subset data
+#Load data
 Data <- read_excel("2003 - data - beats and buds.xlsx",
                    skip = 9,
-                   guess_max = 10000) #guessmax prevents columns with many initial banks being imported as a logical FALSE for not NAs
-Data <- subset(Data, day < 200) #Exclude the late sample in August since it was over a month divorced from previous samples and groundcovers were removed
-Data <- subset(Data, !(Site == "E" & day == 77)) #exclude the early pre-treatment sample at site E so we only visualize and analyze the one sample closer to groundcover installation
+                   guess_max = 10000)
 
-#calculate sum of eggs for the two locations on buds
+#Data cleanup and labeling
+
+#there were two pre-treatment samples at site E instead of one. Exclude the first one so we only visualize and analyze the one sample closer to groundcover installation
+Data <- subset(Data, !(Site == "E" & day == 77))
+#Eggs were counted on wood and green parts of buds. Calculate sum of eggs for the two locations on buds for analysis.
 Data$budcount_eggs <- Data$Eggs.bud + Data$Eggs.wood
-
-#Subset by season for future analysis
-Data_pre <- subset(Data, Phase == 'Pretreatment')
-Data_spring_post <- subset(Data, Phase == 'Buds')
-Data_spring_all <- subset(Data, Phase != 'Leaves')
-Data_summer <- subset(Data, Phase == 'Leaves')
-
-#I want to rename site labels for future graphs
+#Subset by season for future analyses
+Data_spring_all <- subset(Data, Phase != 'Leaves') #data up to summer when switch from bud to leaf monitoring occured
+#Rename site labels for visualizations
 Data_spring_all$Site <- as.factor(Data_spring_all$Site)
 levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="A"] <- "Site A"
 levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="B"] <- "Site B"
 levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="C"] <- "Site C"
 levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="D"] <- "Site D"
 levels(Data_spring_all$Site)[levels(Data_spring_all$Site)=="E"] <- "Site E"
-
-#I want to rename treatment labels for future graphs
+#Rename treatment labels for visualizations
 Data_spring_all$Trt <- as.factor(Data_spring_all$Trt)
 levels(Data_spring_all$Trt)[levels(Data_spring_all$Trt)=="Control"] <- "Control"
 levels(Data_spring_all$Trt)[levels(Data_spring_all$Trt)=="Mylar"] <- "Metallized film"
@@ -47,7 +53,7 @@ levels(Data_spring_all$Trt)[levels(Data_spring_all$Trt)=="Extenday"] <- "Reflect
 
 ```
 
-```{r Chunk 2 - Visualization}
+```{r Chunk 2 Visualization: Fig 2. Pear psylla adults and eggs pre-installation through spring}
 
 #Theme for graphs
 theme_set(theme_classic())
@@ -69,7 +75,7 @@ theme_set(theme_classic())
   legend.key.size = unit(0.75, 'lines')
         )
 
-#Springtime graphs of adults, eggs, and nymphs [Figure 1]
+#Springtime graphs of adults [Figure 2A]
 adults <- ggplot(data = Data_spring_all, aes(x = day, y = Adults, shape = Trt, fill = Trt, color = Trt)) +
   geom_hline(data = subset(Data_spring_all, Site == "Site E"), aes(yintercept = 8), color = 'white') + #this expands the y axis a little to prevent decimal digits in that panel
   scale_fill_manual(values = c('black', 'white', 'grey')) +
@@ -94,6 +100,8 @@ adults <- ggplot(data = Data_spring_all, aes(x = day, y = Adults, shape = Trt, f
   strip.text = element_text(size = 10, hjust = 0),
   plot.margin=unit(c(-0.2,0.1,-1,0.1),"cm")
   )
+
+#Springtime graphs of adults [Figure 2B]
 eggs <- ggplot(data = Data_spring_all, aes(x = day, y = Eggs.bud+Eggs.wood, shape = Trt, fill = Trt, color = Trt)) +
   geom_hline(data = subset(Data_spring_all, Site == "Site D"), aes(yintercept = 13), color = 'white') + #this expands the y axis a little to prevent decimal digits in that panel
   scale_fill_manual(values = c('black', 'white', 'grey')) +
@@ -115,103 +123,24 @@ eggs <- ggplot(data = Data_spring_all, aes(x = day, y = Eggs.bud+Eggs.wood, shap
   xlab('') +
   guides(shape = guide_legend(nrow = 3)) +
   theme(plot.margin=unit(c(-1,0.1,-0.2,0.1),"cm"))
+
 #output
-Fig1 <- (ggarrange(
+Fig2 <- (ggarrange(
     adults,
     eggs,
     labels = c("A","B"), vjust = c(-0.5,-0.5),
     ncol = 1,
     align="hv",common.legend = TRUE
     ))
-ggsave(plot = Fig1, file = "Fig1.png", width = 17, height = 8, unit = "cm")
-
-#Summertime graphs of adults, eggs, and nymphs [Supplementary figure]
-adults <- ggplot(data = Data_summer, aes(x = day, y = Adults, shape = Trt, fill = Trt, color = Trt)) +
-  scale_fill_manual(values = c('black', 'white', 'grey')) +
-  scale_color_manual(values = c('black', 'grey', 'black')) +
-  scale_shape_manual(values = c(21,23,23)) +
-  scale_y_continuous(limits = c(0, NA)) + 
-  stat_summary(fun.y = mean, geom = "line") +
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
-  stat_summary(fun.y = mean, geom = "point") +
-  facet_wrap(~Site, scales = "free_y", nrow = 1) +
-  #Vertical lines for REMOVAL
-  geom_vline(data = subset(Data, Site == "A"), aes(xintercept = 147)) +
-  geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 117)) + #extenday
-  #geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 211)) + #mylar
-  geom_vline(data = subset(Data, Site == "C"), aes(xintercept = 122)) + 
-  geom_vline(data = subset(Data, Site == "D"), aes(xintercept = 183)) +
-  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 144)) + #mylar
-  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 151)) + #extenday
-  #scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
-  ylab('No. adults') +
-  xlab('') +
-  guides(shape = guide_legend(nrow = 3))  +
-  theme(
-  strip.text = element_text(size = 10, hjust = 0),
-  plot.margin=unit(c(-0.2,0.1,-1,0.1),"cm")
-  )
-eggs <- ggplot(data = Data_summer, aes(x = day, y = Eggs, shape = Trt, fill = Trt, color = Trt)) +
-  scale_fill_manual(values = c('black', 'white', 'grey')) +
-  scale_color_manual(values = c('black', 'grey', 'black')) +
-  scale_shape_manual(values = c(21,23,23)) +
-  scale_y_continuous(limits = c(0, NA)) + 
-  stat_summary(fun.y = mean, geom = "line") +
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
-  stat_summary(fun.y = mean, geom = "point") +
-  facet_wrap(~Site, scales = "free_y", nrow = 1) +
-  #Vertical lines for REMOVAL
-  geom_vline(data = subset(Data, Site == "A"), aes(xintercept = 147)) +
-  geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 117)) + #extenday
-  #geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 211)) + #mylar
-  geom_vline(data = subset(Data, Site == "C"), aes(xintercept = 122)) + 
-  geom_vline(data = subset(Data, Site == "D"), aes(xintercept = 183)) +
-  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 144)) + #mylar
-  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 151)) + #extenday
-  #scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
-  ylab('No. eggs') +
-  xlab('') +
-  guides(shape = guide_legend(nrow = 3)) +
-  theme(plot.margin=unit(c(-1,0.1,-0.2,0.1),"cm"))
-nymphs <- ggplot(data = Data_summer, aes(x = day, y = (Small+Big), shape = Trt, fill = Trt, color = Trt)) +
-  scale_fill_manual(values = c('black', 'white', 'grey')) +
-  scale_color_manual(values = c('black', 'grey', 'black')) +
-  scale_shape_manual(values = c(21,23,23)) +
-  scale_y_continuous(limits = c(0, NA)) + 
-  stat_summary(fun.y = mean, geom = "line") +
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0) +
-  stat_summary(fun.y = mean, geom = "point") +
-  facet_wrap(~Site, scales = "free_y", nrow = 1) +
-  #Vertical lines for REMOVAL
-  geom_vline(data = subset(Data, Site == "A"), aes(xintercept = 147)) +
-  geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 117)) + #extenday
-  #geom_vline(data = subset(Data, Site == "B"), aes(xintercept = 211)) + #mylar
-  geom_vline(data = subset(Data, Site == "C"), aes(xintercept = 122)) + 
-  geom_vline(data = subset(Data, Site == "D"), aes(xintercept = 183)) +
-  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 144)) + #mylar
-  geom_vline(data = subset(Data, Site == "E"), aes(xintercept = 151)) + #extenday
-  #scale_x_continuous(breaks=c(80, 92, 106),labels=c("20\nMar", "1\nApr", "15\nApr")) +
-  ylab('No. nymphs') +
-  xlab('') +
-  guides(shape = guide_legend(nrow = 3)) 
-#output
-  FigS1 <- (ggarrange(
-    adults,
-    eggs,
-    nymphs,
-    ncol = 1,
-    align="hv",common.legend = TRUE
-    ))
-ggsave(plot = FigS1, file = "FigS1_summerdata.png", width = 17, height = 12, unit = "cm")
+ggsave(plot = Fig2, file = "Fig2.png", width = 17, height = 8, unit = "cm")
 
 ```
 
-```{r Chunk 3 - Statistical analysis of pear psylla adults & eggs and visualization}
+```{r Chunk 3 Summarization: Calculate pear psylla adult insect-days}
 
 #approach: treat each of the five sites as a block, so N = 5
-#calculate cumulative insect days for each life stage by site, then analyze with block as random factor
+#calculate cumulative insect days for each life stage by site
 
-#Adults
 #First, summarize the multiple counts per plot into one number per plot per site per visit
 Data_adults <- do.call(data.frame, 
              aggregate(Adults~Phase+Date+day+Site+Trt, 
@@ -219,6 +148,7 @@ Data_adults <- do.call(data.frame,
                        function(x) 
                        c(mean = mean(x), 
                        count = length(x))))
+
 #Calculate cumulative insect days - adult taps
 #Build blank data frame
 CID_output <- data.frame(Season=character(), 
@@ -278,50 +208,146 @@ CID_output$Season <- factor(CID_output$Season,
 CID_output$Treatment <- factor(CID_output$Treatment,
                     levels=c("Control","Extenday","Mylar"),
                     labels=c("Ctrl", "R. fab.","M. film"))
+
 #Adults seasonal mean calculation
 CID_output$seasonalmean <- (CID_output$CID / CID_output$Days_sum)
+CID_output_adults <- CID_output
+
+```
+
+```{r Chunk 4 Visualization: Fig 3a. Pear psylla adults summary}
 
 #Adults graph
-#since scale_y_log10 occurs before stat_summary, this backtransforms when used in stat_summary to get correct summary when we want to graph on log scale
-f1 <- function(x) {
-  log10(mean(10 ^ x)) 
-} 
-Fig2a <- ggplot(CID_output, aes(x = Treatment, y = seasonalmean)) +
+Fig3a <- ggplot(CID_output_adults, aes(x = Treatment, y = seasonalmean)) +
   geom_point(aes(group = Block), color = "grey") +
   geom_line(aes(group = Block), color = "grey") +
-  stat_summary(fun = f1, colour = "black", geom = "point") +
+  stat_summary(fun = mean, colour = "black", geom = "point") +
   geom_text(data = data.frame(x = c("Ctrl", "R. fab.","M. film"), y = 10, Season = "Pre-installation", label = "a"), 
                    aes(x = x, y = y, label = label), size = 3) +
   geom_text(data = data.frame(x = c("Ctrl", "R. fab.","M. film"), y = c(2.9,2.8,1.9), Season = "Spring", label = c("a","a","b")), 
                    aes(x = x, y = y, label = label), size = 3) +
-  scale_y_log10() +
+  scale_y_continuous(limits = c(0,NA)) +
   facet_wrap(~Season, scales = "free_y") +
   ylab('Avg. adults') +
   theme(strip.text = element_text(size = 10, hjust = 0),
           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
 
-#Adults statistical tests: pretreatment and spring
-for (test in unique(CID_output$Season)) {
-  Data_test <- subset(CID_output, Season == test)
-  model <- glmmTMB(formula = seasonalmean ~ Treatment + (1|Block), family = gaussian(link = "log"), data = Data_test)
-  plot(simulateResiduals(model))
-  print(test)
-  print("Pear psylla adults")
-  print(Anova(model))
-  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
-  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
-}
-
 #summary with SEM for table
 Data_taps_analyzed <- do.call(data.frame, 
-                          aggregate(CID/Days_sum~Season+Treatment, 
-                                    data = CID_output, 
+                          aggregate(seasonalmean~Season+Treatment, 
+                                    data = CID_output_adults, 
                                     function(x) 
                                     c(mean = mean(x), 
                                       count = length(x),
                                       SEM = sd(x)/sqrt(length(x)))))
 
-#Eggs
+```
+
+```{r Chunk 5 Statistics:    Pear psylla adult pre-installation}
+
+#METHOD FOR PUBLICATION: 3b. summary data, log transform, fixed block. P = 0.16
+
+#method 1a. summary data, no transform, random block. does not fit well
+Data_test <- subset(CID_output_adults, Season == "Pre-installation")
+model_glmm <- glmmTMB(formula = (seasonalmean) ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmm))
+print(Anova(model_glmm))
+print(emmeans(model_glmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 1b. summary data, log transform, random block. P = 0.056
+Data_test <- subset(CID_output_adults, Season == "Pre-installation")
+model_glmm <- glmmTMB(formula = log(seasonalmean) ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmm))
+print(Anova(model_glmm))
+print(emmeans(model_glmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 2. summary data, log transform, random block. P = 0.16
+Data_test <- subset(CID_output_adults, Season == "Pre-installation")
+model_nlme <- lme(log(seasonalmean) ~ Treatment, random = ~1 | Block, data = Data_test, method = "REML")
+anova(model_nlme)
+plot(model_nlme)
+qqnorm(resid(model_nlme))
+print(emmeans(model_nlme, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 3a. summary data, no transform, fixed block. P = 0.99
+Data_test <- subset(CID_output_adults, Season == "Pre-installation")
+model_conventional <- aov((seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 3b. summary data, log transform, fixed block. P = 0.16
+Data_test <- subset(CID_output_adults, Season == "Pre-installation")
+model_conventional <- aov(log(seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 4. no summary, nbinom 2, random plot nested in block. P = 0.22
+Data_test <- subset(Data, Phase == "Pretreatment")
+model_glmm_randomeffects <- glmmTMB(formula = Adults ~ Trt + (1|Site/Trt), family = 'nbinom2', data = Data_test)
+plot(simulateResiduals(model_glmm_randomeffects))
+print(Anova(model_glmm_randomeffects))
+print(emmeans(model_glmm_randomeffects, list(pairwise ~ Trt), adjust = "tukey"))
+
+  
+```
+
+```{r Chunk 6 Statistics:    Pear psylla adult spring}
+
+#METHOD FOR PUBLICATION: 3b. summary data, log transform, fixed block. P = 0.048
+
+#method 1a. summary data, no transform, random block. P = 0.063
+Data_test <- subset(CID_output_adults, Season == "Spring")
+model_glmm <- glmmTMB(formula = seasonalmean ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmm))
+print(Anova(model_glmm))
+print(emmeans(model_glmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 1b. summary data, log transform, random block. P = 0.0033; Control greater than ref fab and metal film
+Data_test <- subset(CID_output_adults, Season == "Spring")
+model_glmm <- glmmTMB(formula = log(seasonalmean) ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmm))
+print(Anova(model_glmm))
+print(emmeans(model_glmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 2. summary data, log transform, random block. P = 0.048
+Data_test <- subset(CID_output_adults, Season == "Spring")
+model_nlme <- lme(log(seasonalmean) ~ Treatment, random = ~1 | Block, data = Data_test, method = "REML")
+anova(model_nlme)
+plot(model_nlme)
+qqnorm(resid(model_nlme))
+print(emmeans(model_nlme, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 3a. summary data, no transform, fixed block. P = 0.17
+Data_test <- subset(CID_output_adults, Season == "Spring")
+model_conventional <- aov((seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 3b. summary data, log transform, fixed block. P = 0.048, control marginally greater than m. film
+Data_test <- subset(CID_output_adults, Season == "Spring")
+model_conventional <- aov(log(seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 4. no summary, nbinom 1, random plot nested in block. P = 0.028
+Data_test <- Data_spring_all
+Data_test <- subset(Data_test, Phase != 'Pretreatment')
+model_glmm_randomeffects <- glmmTMB(formula = Adults ~ Trt + (1|Site/Trt), family = 'nbinom1', data = Data_test)
+plot(simulateResiduals(model_glmm_randomeffects))
+  print(Anova(model_glmm_randomeffects))
+  print(emmeans(model_glmm_randomeffects, list(pairwise ~ Trt), adjust = "tukey"))
+
+```
+
+```{r Chunk 7 Summarization: Calculate pear psylla egg insect-days}
 #First, summarize the multiple counts per plot into one number per plot per site per visit
 Data_eggs <- do.call(data.frame, 
              aggregate(Eggs~Phase+Date+day+Site+Trt, 
@@ -338,7 +364,7 @@ CID_output <- data.frame(Season=character(),
                          Days_sum=numeric())
 Data_eggs$ID <- paste(Data_eggs$Phase,Data_eggs$Site,Data_eggs$Trt,sep = "_")  #Make a unique identifer for each experimental unit by Period of study
 IDs <- unique(Data_eggs$ID)                                   #Get a list of the IDs
-for (value in IDs) {                                            #loop for each ID
+for (value in IDs) {                                          #loop for each ID
   Data_subset <- subset(Data_eggs, ID == value)
   row.names(Data_subset) <- NULL
   for (row in 1:nrow(Data_subset)) {                          #loop to calculate within each ID
@@ -379,7 +405,7 @@ for (value in IDs) {                                            #loop for each I
   CID_newrow <- data.frame(Season,Block,Treatment, CID, Days_sum)
   CID_output <- rbind(CID_output, CID_newrow)
 }
-#Analysis
+
 #Don't want want to analyze summer data due to reflective materials being removed at different times between sites
 CID_output <- subset(CID_output, Season != 'Leaves')
 CID_output$Season <- factor(CID_output$Season,
@@ -388,11 +414,14 @@ CID_output$Season <- factor(CID_output$Season,
 CID_output$Treatment <- factor(CID_output$Treatment,
                     levels=c("Control","Extenday","Mylar"),
                     labels=c("Ctrl", "R. fab.","M. film"))
-f1 <- function(x) {
-  log10(mean(10 ^ x)) 
-} #since scale_y_log10 occurs before stat_summary, this backtransforms when used in stat_summary to get correct summary
-CID_output$seasonalmean <- (CID_output$CID / CID_output$Days_sum)
-Fig2b <- ggplot(CID_output, aes(x = Treatment, y = seasonalmean)) +
+CID_output_eggs <- CID_output
+CID_output_eggs$seasonalmean <- (CID_output$CID / CID_output$Days_sum)
+
+```
+
+```{r Chunk 8 Visualization: Fig. 3b. Pear psylla eggs summary}
+
+Fig3b <- ggplot(CID_output_eggs, aes(x = Treatment, y = seasonalmean)) +
   geom_point(aes(group = Block), color = "grey") +
   geom_line(aes(group = Block), color = "grey") +
   stat_summary(fun = mean, colour = "black", geom = "point") +
@@ -405,39 +434,138 @@ Fig2b <- ggplot(CID_output, aes(x = Treatment, y = seasonalmean)) +
   facet_wrap(~Season, scales = "free_y") +
   theme(strip.text = element_text(size = 10, hjust = 0),
           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
-for (test in unique(CID_output$Season)) {
-  Data_test <- subset(CID_output, Season == test)
-  model <- glmmTMB(formula = seasonalmean ~ Treatment + (1|Block), data = Data_test)
-  plot(simulateResiduals(model))
-  print(test)
-  print("Pear psylla eggs")
-  print(Anova(model))
-  print(emmeans(model, list(pairwise ~ Treatment), adjust = "tukey"))
-  print(emmeans(model, list(trt.vs.ctrl ~ Treatment)))
-}
+
 #summary with SEM for table
-Data_taps_analyzed <- do.call(data.frame, 
+Data_eggs_analyzed <- do.call(data.frame, 
                           aggregate(CID/Days_sum~Season+Treatment, 
-                                    data = CID_output, 
+                                    data = CID_output_eggs, 
                                     function(x) 
                                     c(mean = mean(x), 
                                       count = length(x),
                                       SEM = sd(x)/sqrt(length(x)))))
 
-#Visualization output
-  Fig2 <- (ggarrange(
-    Fig2a,
-    Fig2b,
+#Figure 3 output
+  Fig3 <- (ggarrange(
+    Fig3a,
+    Fig3b,
     ncol = 2,
     labels = c("A", "B"),
     align="hv",common.legend = TRUE
     ))
   
-ggsave(plot = Fig2, file = "Fig2.png", width = 17, height = 5, unit = "cm")
+ggsave(plot = Fig3, file = "Fig3.png", width = 17, height = 5, unit = "cm")
 
 ```
 
-```{r Chunk 4 - other analysis and diagnostics}
+```{r Chunk 9 Statistics:    Pear psylla egg pre-installation}
+
+#METHOD FOR PUBLICATION: 3b. summary data, log transform, fixed block.
+
+#method 1a. summary data, no transform, random block. P = 0.00008. r. fab lowest
+Data_test <- subset(CID_output_eggs, Season == "Pre-installation")
+model_glmmm <- glmmTMB(formula = seasonalmean ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmmm))
+print(Anova(model_glmmm))
+print(emmeans(model_glmmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 1b. summary data, log transform, random block. P = 0.006. r. fab lowest
+Data_test <- subset(CID_output_eggs, Season == "Pre-installation")
+model_glmmm <- glmmTMB(formula = log(seasonalmean) ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmmm))
+print(Anova(model_glmmm))
+print(emmeans(model_glmmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 2. summary data, log transform, random block. P = 0.026
+Data_test <- subset(CID_output_eggs, Season == "Pre-installation")
+model_nlme <- lme(log(seasonalmean) ~ Treatment, random = ~1 | Block, data = Data_test, method = "REML")
+anova(model_nlme)
+plot(model_nlme)
+qqnorm(resid(model_nlme))
+print(emmeans(model_nlme, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 3a. summary data, no transform, fixed block. P = 0.029. r. fab less that m. film; r. fab marginally less than ctrl
+Data_test <- subset(CID_output_eggs, Season == "Pre-installation")
+model_conventional <- aov(seasonalmean ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 3b. summary data, log transform, fixed block. P = 0.026. r. fab less that m. film & ctrl
+Data_test <- subset(CID_output_eggs, Season == "Pre-installation")
+model_conventional <- aov(log(seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 4. no summary, nbinom 2, random plot nested in block. P = 0.022. r. fab less that m. film; r. fab marginally less than ctrl
+Data_test <- Data_spring_all
+Data_test <- subset(Data_test, Phase == 'Pretreatment')
+model_glmm_randomeffects <- glmmTMB(formula = Eggs ~ Trt + (1|Site/Trt), family = 'nbinom1', data = Data_test)
+plot(simulateResiduals(model_glmm_randomeffects))
+print(Anova(model_glmm_randomeffects))
+print(emmeans(model_glmm_randomeffects, list(pairwise ~ Trt), adjust = "tukey"))
+
+```
+
+```{r Chunk 10 Statistics:   Pear psylla egg spring}  
+
+#METHOD FOR PUBLICATION: 3b. summary data, log transform, fixed block. P = 0.23
+
+#method 1a. summary data, no transform, random block. P = 0.27
+Data_test <- subset(CID_output_eggs, Season == "Spring")
+model_glmmm <- glmmTMB(formula = (seasonalmean) ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmmm))
+print("Pear psylla eggs")
+print(Anova(model_glmmm))
+print(emmeans(model_glmmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 1b. summary data, log transform, random block. P = 0.11
+Data_test <- subset(CID_output_eggs, Season == "Spring")
+model_glmmm <- glmmTMB(formula = log(seasonalmean) ~ Treatment + (1|Block), data = Data_test)
+plot(simulateResiduals(model_glmmm))
+print("Pear psylla eggs")
+print(Anova(model_glmmm))
+print(emmeans(model_glmmm, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 2. summary data, log transform, random block. P = 0.23
+Data_test <- subset(CID_output_eggs, Season == "Spring")
+model_nlme <- lme(log(seasonalmean) ~ Treatment, random = ~1 | Block, data = Data_test, method = "REML")
+anova(model_nlme)
+plot(model_nlme)
+qqnorm(resid(model_nlme))
+print(emmeans(model_nlme, list(pairwise ~ Treatment), adjust = "tukey"))
+
+#method 3a. summary data, no transform, fixed block. P = 0.40
+Data_test <- subset(CID_output_eggs, Season == "Spring")
+model_conventional <- aov((seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 3b. summary data, log transform, fixed block. P = 0.23
+Data_test <- subset(CID_output_eggs, Season == "Spring")
+model_conventional <- aov(log(seasonalmean) ~ Treatment + Block, data = Data_test)
+summary(model_conventional)
+print(emmeans(model_conventional, list(pairwise ~ Treatment), adjust = "tukey"))
+plot(model_conventional, 1)
+plot(model_conventional, 2)
+
+#method 4. no summary, nbinom 2, random plot nested in block. P = 0.48
+Data_test <- Data_spring_all
+Data_test <- subset(Data_test, Phase != 'Pretreatment')
+model_glmm_randomeffects <- glmmTMB(formula = Eggs ~ Trt + (1|Site/Trt), family = 'nbinom1', data = Data_test)
+plot(simulateResiduals(model_glmm_randomeffects))
+print(Anova(model_glmm_randomeffects))
+print(emmeans(model_glmm_randomeffects, list(pairwise ~ Trt), adjust = "tukey"))
+  
+
+
+```
+
+```{r Chunk 11 Supplementary analysis and diagnostics}
 
 #summarize nymph counts in spring to check how abundant they were
 #reload data
@@ -461,6 +589,8 @@ Data_smalls <- do.call(data.frame,
                        function(x) 
                        c(max = max(x), 
                        count = length(x))))
+
+
 
 ```
 
