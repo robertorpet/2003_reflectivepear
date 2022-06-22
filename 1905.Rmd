@@ -1,0 +1,224 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code.
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*.
+
+```{r SETUP}
+#LOAD PACKAGES
+library(readxl)
+library(ggplot2)
+library(ggpubr)
+library(emmeans)
+
+
+#LOAD DATA
+Data_taps <- read_excel("1905 - Data - Adults Taps.xlsx", skip = 9)
+Data_spurs <- read_excel("1905 - Data - Spurs.xlsx", skip = 9)
+Data_leaves <- read_excel("1905 - Data - Leaves.xlsx", skip = 9)
+
+#RELABEL TREATMENT NAMES 
+Data_taps$trt <- factor(Data_taps$trt,
+                    levels=c("A","B"),
+                    labels=c("Control", "Extenday"))
+Data_spurs$trt <- factor(Data_spurs$trt,
+                    levels=c("A","B"),
+                    labels=c("Control", "Extenday"))
+Data_leaves$trt <- factor(Data_leaves$trt,
+                    levels=c("A","B"),
+                    labels=c("Control", "Extenday"))
+
+#CREATE COLUMN FOR DATES AS FACTORS
+Data_taps$date_factor <- factor(Data_taps$date)
+Data_spurs$date_factor <- factor(Data_spurs$date)
+Data_leaves$date_factor <- factor(Data_leaves$date)
+
+#SUMMARIZE MULTIPLE MEASUREMENTS TO ONE MEAN PER PLOT PER DATE
+Data_taps <- do.call(data.frame, 
+             aggregate(adults~rep+trt+date+date_factor, 
+                       data = Data_taps, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+Data_spurs <- do.call(data.frame, 
+             aggregate(cbind(eggs,nymphs)~rep+trt+date, 
+                       data = Data_spurs, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+Data_leaves <- do.call(data.frame, 
+             aggregate(cbind(eggs,yng,old)~rep+trt+date, 
+                       data = Data_leaves, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+
+#GRAPH APPEARANCE
+theme_new <- theme_set(theme_bw())
+theme_new <- theme_update(
+  plot.background = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank(),
+  axis.title.x = element_blank(),
+  axis.text.x = element_text(color = 'black'),
+  axis.text.y = element_text(color = 'black'),
+  legend.position=c(1,1),
+  legend.justification=c(1,0),
+  legend.box="vertical",
+  legend.direction='vertical',
+  legend.box.margin=margin(0,0,0,0),
+  legend.title = element_blank(),
+  legend.key.size = unit(0.75, 'lines')
+)
+
+```
+
+```{r VISUALIZATION}
+#extenday was installed april 3, removal may 13
+
+adults <- ggplot(Data_taps, aes(x = date, y = adults.mean, fill = trt, shape = trt, linetype = trt, color = trt)) +
+  scale_fill_manual(values = c('black', 'white')) +
+  scale_color_manual(values = c('black', 'grey')) +
+  scale_shape_manual(values = c(21,23)) +
+  geom_vline(xintercept = as.POSIXct(as.Date("2019-04-03")), linetype=2) +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "point") +
+  #scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+  scale_y_continuous(limits = c(0,NA), "No. adults/tray")
+
+eggs <- ggplot(Data_spurs, aes(x = date, y = eggs.mean, fill = trt, shape = trt, linetype = trt, color = trt)) +
+  scale_fill_manual(values = c('black', 'white')) +
+  scale_color_manual(values = c('black', 'grey')) +
+  scale_shape_manual(values = c(21,23,2)) +
+  geom_vline(xintercept = as.POSIXct(as.Date("2019-04-03")), linetype=2) +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "point") +
+  #scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+  scale_y_continuous(limits = c(0,NA), "Average eggs (buds)")
+
+nymphs <- ggplot(Data_spurs, aes(x = date, y = nymphs.mean, fill = trt, shape = trt, linetype = trt, color = trt)) +
+  scale_fill_manual(values = c('black', 'white')) +
+  scale_color_manual(values = c('black', 'grey')) +
+  scale_shape_manual(values = c(21,23)) +
+  geom_vline(xintercept = as.POSIXct(as.Date("2019-04-03")), linetype=2) +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "point") +
+  #scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+  scale_y_continuous(limits = c(0,NA),"Average nymphs (buds)")
+
+eggs_leaves <- ggplot(Data_leaves, aes(x = date, y = eggs.mean, fill = trt, shape = trt, linetype = trt, color = trt)) +
+  scale_fill_manual(values = c('black', 'white')) +
+  scale_color_manual(values = c('black', 'grey')) +
+  scale_shape_manual(values = c(21,23,2)) +
+  geom_vline(xintercept = as.POSIXct(as.Date("2019-04-03")), linetype=2) +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "point") +
+  #scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+  scale_y_continuous(limits = c(0,NA),"Average eggs (leaves)")
+
+nymphs_leaves <- ggplot(Data_leaves, aes(x = date, y = yng.mean+old.mean, fill = trt, shape = trt, linetype = trt, color = trt)) +
+  scale_fill_manual(values = c('black', 'white')) +
+  scale_color_manual(values = c('black', 'grey')) +
+  scale_shape_manual(values = c(21,23,2)) +
+  geom_vline(xintercept = as.POSIXct(as.Date("2019-04-03")), linetype=2) +
+  stat_summary(fun = "mean", geom = "line") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0, linetype = 'solid') +
+  stat_summary(fun = "mean", geom = "point") +
+  #scale_x_continuous("", limits = c(59,135), breaks = c(60,91,121), labels = c("1-Mar","1-Apr","1-May")) +
+  scale_y_continuous(limits = c(0,NA),"Average nymphs (leaves)")
+
+```
+
+```{r}
+#STATISTICAL ANALYSIS
+
+#adults taps - pre-installation: P = 0.51
+data_test <- subset(Data_taps, date_factor == "2019-04-01")
+model <- aov(adults.mean ~ trt + rep, data = data_test)
+summary(model)
+table_summary <- do.call(data.frame, 
+             aggregate(adults.mean~trt, 
+                       data = data_test, 
+                       function(x) 
+                       c(mean = mean(x),
+                         SEM = sd(x)/(sqrt(length(x))), 
+                       count = length(x))))
+  
+#adults taps - post-installation: P = 0.085
+data_test <- subset(Data_taps, date_factor != "2019-04-01")
+data_test <- do.call(data.frame, 
+             aggregate(adults.mean~rep+trt, 
+                       data = data_test, 
+                       function(x) 
+                       c(mean = mean(x),
+                       count = length(x))))
+model <- aov(adults.mean.mean ~ trt + rep, data = data_test)
+summary(model)
+table_summary <- do.call(data.frame, 
+             aggregate(adults.mean.mean~trt, 
+                       data = data_test, 
+                       function(x) 
+                       c(mean = mean(x),
+                         SEM = sd(x)/(sqrt(length(x))), 
+                       count = length(x))))
+
+#eggs (spurs): P = 0.040
+data_test <- do.call(data.frame, 
+             aggregate(eggs.mean~rep+trt, 
+                       data = Data_spurs, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+model <- aov(eggs.mean.mean ~ trt + rep, data = data_test)
+summary(model)
+table_summary <- do.call(data.frame, 
+             aggregate(eggs.mean.mean~trt, 
+                       data = data_test, 
+                       function(x) 
+                       c(mean = mean(x),
+                         SEM = sd(x)/(sqrt(length(x))), 
+                       count = length(x))))
+
+#nymphs (spurs): P = 0.45
+data_test <- do.call(data.frame, 
+             aggregate(nymphs.mean~rep+trt, 
+                       data = Data_spurs, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+model <- aov(nymphs.mean.mean ~ trt + rep, data = data_test)
+summary(model)
+table_summary <- do.call(data.frame, 
+             aggregate(nymphs.mean.mean~trt, 
+                       data = data_test, 
+                       function(x) 
+                       c(mean = mean(x),
+                         SEM = sd(x)/(sqrt(length(x))), 
+                       count = length(x))))
+
+#nymphs (leaves): P = 0.16
+Data_leaves$nymphs <- Data_leaves$yng.mean + Data_leaves$old.mean
+data_test <- do.call(data.frame, 
+             aggregate(nymphs~rep+trt, 
+                       data = Data_leaves, 
+                       function(x) 
+                       c(mean = mean(x), 
+                       count = length(x))))
+model <- aov(nymphs.mean ~ trt + rep, data = data_test)
+summary(model)
+table_summary <- do.call(data.frame, 
+             aggregate(nymphs.mean~trt, 
+                       data = data_test, 
+                       function(x) 
+                       c(mean = mean(x),
+                         SEM = sd(x)/(sqrt(length(x))), 
+                       count = length(x))))
+
+```
