@@ -1,11 +1,12 @@
----
-title: "R Notebook"
-output: html_notebook
----
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code.
+1905 project code, Robert Orpet, 22 June, 2022
+For: Reflective groundcovers implementation manuscript
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*.
+Design: complete block with two treatments (control, reflective fabric (= Extenday). Blocks are adjacent plots.
+
+Sampling: there were pre-treatment and post-treatment samples. Each sample included multiple measurements (beat tray taps) on the same plot. There were multiple post-treatment samples through spring (beat tray taps, spur counts, and leaf counts).
+
+Analysis approach: summarize multiple measurements to one mean per plot per date
 
 ```{r SETUP}
 #LOAD PACKAGES
